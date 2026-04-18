@@ -1,5 +1,5 @@
 langgraph
-langchain-openai
+langchain-groq
 langchain-community
 rich
 python-dotenv
