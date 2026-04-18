@@ -66,22 +66,24 @@ How we handle it:
 Expected result:
 No accidental purchases.
 
-## 5. JSON Read Error from File Encoding (Real Issue During Build)
+## 5. Tool Timeout or Malformed Response
 
 Scenario:
-While updating data files from PowerShell, one JSON file was saved with different text encoding.
+One or more external tools timeout, return malformed JSON, or fail unexpectedly during a customer interaction.
 
 What can go wrong:
-The app can fail at startup with a JSON read error even if the file looks fine.
+The assistant could crash, hang indefinitely, or return incomplete data to the customer if tool failures are not handled.
 
 How we handle it:
-- Data loading now reads JSON in a way that supports both common UTF-8 formats.
-- We re-tested startup after the fix.
+- All tool calls include timeout handling and try-catch error management.
+- If a tool fails, the assistant catches the exception and provides a graceful fallback response.
+- Malformed responses are validated before use; invalid data triggers a retry or user-friendly error message.
+- The system logs the failure for review but continues operating instead of crashing.
 
 Expected result:
-No startup failures from file encoding differences.
+System remains stable, customer receives a helpful message (e.g., "I'm having trouble looking that up right now, please try again in a moment"), and failures are logged for debugging.
 
 ## Notes
 
 - These are the five failure modes included for hackathon review.
-- Each one is based on real behavior in this project.
+- Each one is based on real behavior in this project or critical requirements from hackathon guidelines.
