@@ -210,8 +210,25 @@
     "phone": "8979101111",
     "tier": "standard",
     "member_since": "2026-04-19",
+    "total_orders": 4,
+    "total_spent": 1269.93,
+    "address": {
+      "street": "N/A",
+      "city": "N/A",
+      "state": "N/A",
+      "zip": "00000"
+    },
+    "notes": "Customer profile created by support assistant during checkout."
+  },
+  {
+    "customer_id": "C013",
+    "name": "Aditya Gupta email",
+    "email": "adi.gupta@gmail.com",
+    "phone": "8900102030",
+    "tier": "standard",
+    "member_since": "2026-04-19",
     "total_orders": 1,
-    "total_spent": 259.98,
+    "total_spent": 129.99,
     "address": {
       "street": "N/A",
       "city": "N/A",
