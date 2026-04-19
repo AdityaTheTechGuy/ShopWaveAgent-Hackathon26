@@ -2,43 +2,72 @@
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
-flowchart TD
-    User["User"] --> CLI["CLI (main.py)"]
-    CLI --> InputGuard{"Input <= 600 chars?"}
-    InputGuard -- "No" --> PromptShort["Ask user to shorten message"]
-    InputGuard -- "Yes" --> Graph["LangGraph App (agent.py)"]
+flowchart TB
+    subgraph Entry["1) Input and Entry"]
+        User["User"] --> CLI["CLI (main.py)"]
+        CLI --> InputGuard{"Message <= 600 chars?"}
+        InputGuard -- "No" --> PromptShort["Ask user to shorten message"]
+        InputGuard -- "Yes" --> Graph["LangGraph app (agent.py)"]
+    end
 
-    Graph --> IntentCheck{"Missing details?"}
-    IntentCheck -- "Place order missing name/email/phone" --> AskCheckout["Ask for required checkout fields"]
-    IntentCheck -- "Cancel/refund missing order ID" --> AskOrderId["Ask for valid order ID"]
-    IntentCheck -- "No" --> ToolNode["Tool execution node"]
+    subgraph PreCheck["2) Intent and Required Details"]
+        Graph --> IntentCheck{"Missing details?"}
+        IntentCheck -- "Place order missing name/email/phone" --> AskCheckout["Ask for required checkout fields"]
+        IntentCheck -- "Cancel/refund missing order ID" --> AskOrderId["Ask for valid order ID"]
+        IntentCheck -- "No" --> ToolNode["Tool execution node"]
+        AskCheckout --> PrecheckResult["Pre-check outcome"]
+        AskOrderId --> PrecheckResult
+    end
 
-    ToolNode --> OrderTools["get_order / cancel_order / refund tools"]
-    OrderTools --> OrderIdGuard{"Order ID valid?"}
-    OrderIdGuard -- "No" --> IdError["Return invalid order ID message"]
-    OrderIdGuard -- "Yes" --> OrderOps["Fetch/update order"]
+    subgraph OrderBranch["3A) Order, Cancel, Refund Branch"]
+        ToolNode --> OrderTools["get_order / cancel_order / refund tools"]
+        OrderTools --> OrderIdGuard{"Order ID valid?"}
+        OrderIdGuard -- "No" --> IdError["Return invalid order ID message"]
+        OrderIdGuard -- "Yes" --> OrderOps["Fetch or update order"]
+        IdError --> OrderResult["Order branch outcome"]
+        OrderOps --> OrderResult
+    end
 
-    ToolNode --> PlaceOrder["place_order"]
-    PlaceOrder --> QtyGuard{"Quantity 1..10?"}
-    QtyGuard -- "No" --> QtyError["Return quantity limit message"]
-    QtyGuard -- "Yes" --> ContactGuard{"Valid email + 10-digit phone?"}
-    ContactGuard -- "No" --> ContactError["Return contact validation message"]
-    ContactGuard -- "Yes" --> CustomerFlow["Find customer by email or create new customer"]
-    CustomerFlow --> Persist["Persist customers.json and orders.json"]
+    subgraph PlaceBranch["3B) Place Order Branch"]
+        ToolNode --> PlaceOrder["place_order"]
+        PlaceOrder --> QtyGuard{"Quantity between 1 and 10?"}
+        QtyGuard -- "No" --> QtyError["Return quantity limit message"]
+        QtyGuard -- "Yes" --> ContactGuard{"Valid email and 10-digit phone?"}
+        ContactGuard -- "No" --> ContactError["Return contact validation message"]
+        ContactGuard -- "Yes" --> CustomerFlow["Find customer by email or create new customer"]
+        CustomerFlow --> Persist["Persist customers.json and orders.json"]
+        QtyError --> PlaceResult["Place-order branch outcome"]
+        ContactError --> PlaceResult
+        Persist --> PlaceResult
+    end
 
-    ToolNode --> OtherTools["product lookup / policy search / escalation"]
+    subgraph KnowledgeBranch["3C) Knowledge and Product Branch"]
+        ToolNode --> OtherTools["product lookup / policy search / escalation"]
+        OtherTools --> KnowledgeResult["Knowledge branch outcome"]
+    end
 
-    AskCheckout --> Response["Final response"]
-    AskOrderId --> Response
-    IdError --> Response
-    QtyError --> Response
-    ContactError --> Response
-    OrderOps --> Response
-    Persist --> Response
-    OtherTools --> Response
+    subgraph Exit["4) Response and Logging"]
+        PromptShort --> Gather["Collect outcomes"]
+        PrecheckResult --> Gather
+        OrderResult --> Gather
+        PlaceResult --> Gather
+        KnowledgeResult --> Gather
+        Gather --> Response["Final response"]
+        Response --> Audit["Append audit log"]
+        Audit --> CLI
+    end
 
-    Response --> Audit["Append audit log"]
-    Audit --> CLI
+    classDef stage fill:#f8fafc,stroke:#94a3b8,color:#0f172a,stroke-width:1px;
+    classDef guard fill:#fff7ed,stroke:#f59e0b,color:#7c2d12,stroke-width:1px;
+    classDef action fill:#eef2ff,stroke:#6366f1,color:#1e1b4b,stroke-width:1px;
+    classDef data fill:#ecfdf5,stroke:#10b981,color:#064e3b,stroke-width:1px;
+    classDef warn fill:#fef2f2,stroke:#ef4444,color:#7f1d1d,stroke-width:1px;
+
+    class Entry,PreCheck,OrderBranch,PlaceBranch,KnowledgeBranch,Exit stage;
+    class InputGuard,IntentCheck,OrderIdGuard,QtyGuard,ContactGuard guard;
+    class Graph,ToolNode,OrderTools,PlaceOrder,OtherTools,OrderOps,CustomerFlow,PrecheckResult,OrderResult,PlaceResult,KnowledgeResult,Gather,Response,Audit action;
+    class Persist data;
+    class PromptShort,AskCheckout,AskOrderId,IdError,QtyError,ContactError warn;
 ```
 
 ## Notes
