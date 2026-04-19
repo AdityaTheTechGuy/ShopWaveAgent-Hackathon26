@@ -1,125 +1,38 @@
-```mermaid
-graph TD
-    A["👤 User Input"] -->|"cancel my order ORD-1012"| B["🧠 System Prompt<br/>13 Operational Rules"]
-    
-    B -->|"For cancellation: validate<br/>order status first"| C["📊 LangGraph<br/>StateGraph"]
-    
-    C -->|"call_model()"| D["🤖 LLM Inference<br/>Groq llama-3.1-8b"]
-    
-    D -->|"Tool Decision<br/>get_order() + cancel_order()"| E["🔧 Tool Selection"]
-    
-    E -->|"Step 1: Validate"| F["📋 get_order<br/>Fetch ORD-1012"]
-    
-    F -->|"Status: processing ✓"| G["🛑 cancel_order<br/>Update status"]
-    
-    G -->|"✓ Cancelled"| H["💾 Persistence<br/>Save to orders.json"]
-    
-    H -->|"Tool Result"| I["📨 LLM Response<br/>Generate friendly message"]
-    
-    I -->|"Response generated"| J["🖥️ CLI Output<br/>Rich Panel"]
-    
-    J -->|"Display message"| K["📝 Audit Log<br/>logs/audit_log.jsonl"]
-    
-    L["⚠️ Error Handling"]
-    L -->|"Invalid ID? → Return error"| J
-    L -->|"Already cancelled? → Return error"| J
-    L -->|"LLM timeout? → Fallback response"| J
-    
-    style A fill:#e1f5ff
-    style D fill:#fff3e0
-    style E fill:#f3e5f5
-    style G fill:#c8e6c9
-    style H fill:#ffccbc
-    style J fill:#b3e5fc
-    style K fill:#ffe0b2
-    style L fill:#ffcdd2
-```
+%%{init: {'theme': 'base'}}%%
+flowchart TD
+    User["User"] --> CLI["CLI (main.py)"]
+    CLI --> InputGuard{"Input <= 600 chars?"}
+    InputGuard -- "No" --> PromptShort["Ask user to shorten message"]
+    InputGuard -- "Yes" --> Graph["LangGraph App (agent.py)"]
 
-**Agent Loop Flow:**
-1. **User Input** → Natural language query
-2. **System Prompt** → 13 rules constrain behavior
-3. **LLM Decision** → Which tool to call
-4. **Tool Execution** → Business logic layer
-5. **Persistence** → Save to JSON
-6. **Response** → Friendly message
-7. **Audit Trail** → Log everything
+    Graph --> IntentCheck{"Missing details?"}
+    IntentCheck -- "Place order missing name/email/phone" --> AskCheckout["Ask for required checkout fields"]
+    IntentCheck -- "Cancel/refund missing order ID" --> AskOrderId["Ask for valid order ID"]
+    IntentCheck -- "No" --> ToolNode["Tool execution node"]
 
-**Tools Available (10 total):**
-```
-┌─────────────────────────────────┐
-│ CUSTOMER INFO & LOOKUP          │
-├─────────────────────────────────┤
-│ • get_customer_info()           │
-│ • get_order()                   │
-│ • search_knowledge_base()       │
-└─────────────────────────────────┘
+    ToolNode --> OrderTools["get_order / cancel_order / refund tools"]
+    OrderTools --> OrderIdGuard{"Order ID valid?"}
+    OrderIdGuard -- "No" --> IdError["Return invalid order ID message"]
+    OrderIdGuard -- "Yes" --> OrderOps["Fetch/update order"]
 
-┌─────────────────────────────────┐
-│ ORDER MANAGEMENT                │
-├─────────────────────────────────┤
-│ • place_order()                 │
-│ • cancel_order()                │
-│ • resolve_product_from_request()│
-└─────────────────────────────────┘
+    ToolNode --> PlaceOrder["place_order"]
+    PlaceOrder --> QtyGuard{"Quantity 1..10?"}
+    QtyGuard -- "No" --> QtyError["Return quantity limit message"]
+    QtyGuard -- "Yes" --> ContactGuard{"Valid email + 10-digit phone?"}
+    ContactGuard -- "No" --> ContactError["Return contact validation message"]
+    ContactGuard -- "Yes" --> CustomerFlow["Find customer by email or create new customer"]
+    CustomerFlow --> Persist["Persist customers.json and orders.json"]
 
-┌─────────────────────────────────┐
-│ REFUNDS & RETURNS               │
-├─────────────────────────────────┤
-│ • check_refund_eligibility()    │
-│ • issue_refund()                │
-│ • get_product_info()            │
-└─────────────────────────────────┘
+    ToolNode --> OtherTools["product lookup / policy search / escalation"]
 
-┌─────────────────────────────────┐
-│ ESCALATION                      │
-├─────────────────────────────────┤
-│ • escalate_to_human()           │
-└─────────────────────────────────┘
-```
+    AskCheckout --> Response["Final response"]
+    AskOrderId --> Response
+    IdError --> Response
+    QtyError --> Response
+    ContactError --> Response
+    OrderOps --> Response
+    Persist --> Response
+    OtherTools --> Response
 
-**Business Logic Enforcement:**
-- Tool layer validates all rules
-- LLM cannot override business logic
-- Idempotent operations (no double-cancel)
-- Return window enforcement
-- Status validation before modifications
-
-**Error Handling:**
-- Invalid IDs → Graceful error message
-- Out-of-window → Escalation
-- Ambiguous products → Ask for clarification
-- LLM timeouts → Fallback response
-- No crashes, ever
-
-**Data Flow:**
-```
-JSON In-Memory      Tool Execution      JSON Out (Persisted)
-┌─────────────┐        ┌──────────┐        ┌─────────────┐
-│customers[]  │────→   │cancel()  │   ────→│orders.json  │
-│products[]   │   │    │place()   │   │    │(updated)   │
-│orders[]     │───┘    │issue()   │   └───→│customers.json
-│tickets[]    │        └──────────┘        │(updated)   │
-└─────────────┘                            └─────────────┘
-```
-
-**Audit Trail:**
-Every interaction logged to JSON:
-```json
-{
-  "timestamp": "2026-04-18T23:30:15Z",
-  "user_query": "cancel my order ORD-1012",
-  "tool_calls": ["get_order", "cancel_order"],
-  "tool_results": [success, success],
-  "agent_response": "Your order has been cancelled...",
-  "response_time_ms": 2100
-}
-```
-
-**Key Features:**
-✅ Natural language → Tool calls (LangGraph)
-✅ Business rules → Tool layer (not LLM)
-✅ Persistence → JSON (immediate save)
-✅ Audit trail → Per-session JSONL
-✅ Error resilience → Try-except + fallback
-✅ State management → Maintains context
-✅ Guest checkout → C000 fallback
+    Response --> Audit["Append audit log"]
+    Audit --> CLI

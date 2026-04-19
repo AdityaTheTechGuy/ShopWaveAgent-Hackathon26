@@ -54,7 +54,13 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-Create `.env`:
+Important judge setup steps:
+
+1. Create a `.env` file.
+2. Add `GROQ_API_KEY=your_key`.
+
+
+Example `.env` contents:
 
 ```bash
 GROQ_API_KEY=your_groq_api_key_here
@@ -66,13 +72,18 @@ GROQ_API_KEY=your_groq_api_key_here
 python main.py
 ```
 
-Try prompts:
+Challenge checks:
 
-- `my order id is ORD-1002`
-- `cancel my order ORD-1010`
-- `can I get a refund for ORD-1008?`
-- `show details for product P006`
-- `what is your cancellation policy for shipped orders?`
+- `I want to buy a smartwatch.`
+- `Buy 2 units of P011. My name is Alice Turner, email alice.turner@email.com, phone 4155550101.`
+- `Buy 25 units of P011. My name is Test User, email test.user@example.com, phone 9995551212.`
+- `Buy 1 unit of P011. My name is Test User, email test@@example, phone 4155550101.`
+- `Buy 1 unit of P011. My name is Test User, email test.user@example.com, phone 14155550101.`
+- `Cancel my order.`
+- `Cancel order ABC-77.`
+- `Refund order 1002.`
+- `Refund order ORD-9999.`
+- `Buy 1 unit of P010. My name is New Person, email new.person@example.com, phone 7775551111.`
 
 ## Core Features
 
@@ -81,9 +92,18 @@ Try prompts:
 - Refund eligibility and processing
 - Product lookup by product ID
 - Policy search from knowledge base
-- Order placement via natural language
+- Order placement with guided checkout details (name, email, phone)
+- Existing customer auto-update by email; auto-create new customer profile when needed
 - Human escalation path
 - Audit log output to `logs/`
+
+## Safety Guardrails
+
+- Input length cap in CLI (600 characters)
+- Strict order ID format validation (`ORD-1234` or `1234`)
+- Quantity limits for order placement (1 to 10 units per order)
+- Email format validation for checkout
+- Phone validation: must be exactly 10 digits
 
 ## Implemented Tools
 
@@ -103,3 +123,4 @@ Try prompts:
 - Business logic is enforced in `tools.py`.
 - The agent orchestration and tool routing are in `agent.py`.
 - CLI and audit logging are in `main.py`.
+- Customer and order records are updated together during successful checkout.

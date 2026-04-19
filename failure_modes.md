@@ -1,89 +1,86 @@
 # ShopWave AI Support Agent - Failure Modes
 
-This file lists five common problems we tested and how the assistant handles them.
+This file lists practical failure scenarios and expected behavior after the latest guardrail and checkout updates.
 
-## 1. Invalid Order ID
-
-Scenario:
-A user asks for an order that does not exist, for example: ORD-9999.
-
-What can go wrong:
-The assistant might show wrong order details or return a vague error.
-
-How we handle it:
-- The assistant checks the order using get_order first.
-- If no match is found, it returns a clear "order not found" reply.
-- The assistant asks for a valid order ID or registered email instead of guessing.
-
-Expected result:
-No crash, no fabricated data, and the customer gets a clear next step.
-
-## 2. Repeat Cancellation
+## 1. Invalid Order ID Format
 
 Scenario:
-A user cancels the same order more than once.
+User sends an invalid ID like `ABC-77` for order status, cancellation, or refund.
 
 What can go wrong:
-A second cancel request could still show success or change data again by mistake.
+The system might normalize bad input and fetch the wrong order.
 
 How we handle it:
-- cancel_order checks current status before any update.
-- Only processing orders are cancellable.
-- If status is already cancelled, the assistant returns a direct already cancelled message.
+- `normalize_order_id` now accepts only `ORD-<digits>` or plain digits.
+- Invalid input returns a clear validation message.
+- No order mutation happens for invalid IDs.
 
 Expected result:
-Order data stays correct and the user gets a simple explanation.
+User gets a direct correction message and no data is changed.
 
-## 3. Refund Requested After Return Window
+## 2. Oversized User Input
 
 Scenario:
-A user requests a refund after the return deadline has passed.
+User pastes a very long prompt in the CLI.
 
 What can go wrong:
-The assistant could approve a refund that should be denied, or deny it without a reason.
+Very large input can stress token usage and degrade response quality.
 
 How we handle it:
-- The assistant checks eligibility using check_refund_eligibility before issue_refund.
-- The tool checks delivery status and return deadline.
-- If not eligible, the assistant explains why and offers to pass it to a human agent when needed.
+- CLI blocks input over 600 characters.
+- User gets a friendly prompt to shorten the request.
+- The agent does not process oversized input.
 
 Expected result:
-Policy is enforced consistently and the customer receives a clear reason.
+Session remains responsive and safe.
 
-## 4. Ambiguous Product Request
+## 3. Quantity Abuse During Checkout
 
 Scenario:
-A user asks to buy a broad category (for example: smartwatch) without enough detail.
+User requests very high quantity, for example 25 units.
 
 What can go wrong:
-The assistant may place the wrong order if the request is not clear.
+Unrealistic bulk orders can bypass demo constraints.
 
 How we handle it:
-- Product resolution checks catalog matches first.
-- If multiple items match, the assistant asks the user to confirm the exact product.
-- If product/company is outside the catalog, the request is denied with available options.
+- `place_order` enforces quantity range 1 to 10.
+- Out-of-range requests return explicit limits.
 
 Expected result:
-No accidental purchases.
+No oversized orders are created.
 
-## 5. Tool Timeout or Malformed Response
+## 4. Missing Real-World Checkout Details
 
 Scenario:
-One or more external tools timeout, return malformed JSON, or fail unexpectedly during a customer interaction.
+User asks to place an order without customer details.
 
 What can go wrong:
-The assistant could crash, hang indefinitely, or return incomplete data to the customer if tool failures are not handled.
+Order may be placed without enough identity/contact data.
 
 How we handle it:
-- All tool calls include timeout handling and try-catch error management.
-- If a tool fails, the assistant catches the exception and provides a graceful fallback response.
-- Malformed responses are validated before use; invalid data triggers a retry or user-friendly error message.
-- The system logs the failure for review but continues operating instead of crashing.
+- Agent asks follow-up questions for missing full name, email, and phone.
+- `place_order` independently validates and blocks checkout when those details are missing.
 
 Expected result:
-System remains stable, customer receives a helpful message (e.g., "I'm having trouble looking that up right now, please try again in a moment"), and failures are logged for debugging.
+Order creation only happens after required checkout details are provided.
+
+## 5. Existing vs New Customer During Checkout
+
+Scenario:
+User places order with an email that may or may not already exist.
+
+What can go wrong:
+Duplicate customer records or stale customer profile details.
+
+How we handle it:
+- Existing customer is matched by email and profile fields are updated.
+- If no existing customer is found, a new customer ID is created.
+- Order and customer totals are updated together.
+
+Expected result:
+Customer records stay consistent, and each order links to a valid customer profile.
 
 ## Notes
 
-- These are the five failure modes included for hackathon review.
-- Each one is based on real behavior in this project or critical requirements from hackathon guidelines.
+- These scenarios are aligned with the current implementation in `agent.py`, `tools.py`, and `main.py`.
+- Tool-layer checks remain the source of truth for business-rule enforcement.

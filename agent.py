@@ -57,6 +57,8 @@ SYSTEM_PROMPT = (
     "- For order status or ownership questions, use get_order first.\n"
     "- For refund requests, follow this exact sequence: get_order -> check_refund_eligibility -> issue_refund only if eligible is true.\n"
     "- For cancellations, call get_order first, then cancel_order only when status is processing.\n"
+    "- Before running place_order, cancel_order, check_refund_eligibility, or issue_refund, collect missing required details by asking follow-up questions.\n"
+    "- Required details: place_order => product (name or product ID), quantity, full name, email, and phone number; cancellation/refund => order ID.\n"
     "- For policy questions, call search_knowledge_base and cite the matching policy section briefly.\n"
     "- For product lookup, use get_product_info by ID. For buying options, use list_available_products. For buying intent, use place_order.\n"
     "- Escalate with escalate_to_human for replacement requests, suspicious behavior, or conflicting records.\n\n"
@@ -66,20 +68,175 @@ SYSTEM_PROMPT = (
     "- Never claim an action succeeded unless a tool result confirms it."
 )
 
+
+def _to_text(chat_message) -> str:
+    content = getattr(chat_message, "content", "")
+    return content if isinstance(content, str) else str(content)
+
+
+def _has_order_id(text: str) -> bool:
+    cleaned = text.replace(":", " ").replace("#", " ").upper()
+    words = cleaned.split()
+    for i, word in enumerate(words):
+        if word.startswith("ORD-") and word[4:].isdigit():
+            return True
+        if word.isdigit() and i > 0 and words[i - 1] in {"ORDER", "ID", "NUMBER"}:
+            return True
+    return False
+
+
+def _has_email(text: str) -> bool:
+    return bool(re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text))
+
+
+def _has_name(text: str) -> bool:
+    lowered = text.lower()
+    markers = ["my name is", "name is", "name:", "i am", "this is"]
+    for marker in markers:
+        idx = lowered.find(marker)
+        if idx == -1:
+            continue
+        tail = text[idx + len(marker):].strip(" .,:;-")
+        words = [w for w in tail.split() if w]
+        if len(words) >= 2:
+            return True
+    return False
+
+
+def _has_phone(text: str) -> bool:
+    lowered = text.lower()
+    markers = ["phone", "mobile", "contact", "number"]
+    for marker in markers:
+        idx = lowered.find(marker)
+        if idx == -1:
+            continue
+        snippet = text[idx: idx + 50]
+        digits = "".join(ch for ch in snippet if ch.isdigit())
+        if len(digits) == 10:
+            return True
+    return False
+
+
+def _has_quantity(text: str) -> bool:
+    lowered = text.lower().replace(":", " ")
+    words = lowered.split()
+
+    for i, word in enumerate(words):
+        if word.endswith("x") and word[:-1].isdigit():
+            return True
+        if word in {"unit", "units", "qty", "quantity"} and i > 0 and words[i - 1].isdigit():
+            return True
+        if word in {"qty", "quantity"} and i + 1 < len(words) and words[i + 1].isdigit():
+            return True
+        if word in {"buy", "purchase", "order", "get"} and i + 1 < len(words) and words[i + 1].isdigit():
+            return True
+    return False
+
+
+def _has_product(text: str) -> bool:
+    words = text.upper().replace(",", " ").split()
+    for word in words:
+        cleaned = word.strip(".,:;!?()[]{}")
+        if len(cleaned) == 4 and cleaned.startswith("P") and cleaned[1:].isdigit():
+            return True
+
+    lowered = text.lower()
+    product_terms = [
+        "headphones",
+        "running shoes",
+        "coffee maker",
+        "laptop stand",
+        "yoga mat",
+        "smartwatch",
+        "smart watch",
+        "desk lamp",
+        "bluetooth speaker",
+        "analog watch",
+        "chronoclassic",
+        "novafit",
+        "pulsex",
+        "prosound",
+        "swiftrun",
+        "brewmaster",
+        "ergolift",
+        "zenflow",
+        "lumidesk",
+        "skyband",
+        "aster",
+    ]
+    return any(term in lowered for term in product_terms)
+
+
+def _pick_request_type(latest_user_text: str, chat_history_text: str) -> str:
+    text = f"{latest_user_text}\n{chat_history_text}".lower()
+    if any(word in text for word in ["refund", "money back", "return"]):
+        return "refund"
+    if any(word in text for word in ["cancel", "cancellation"]):
+        return "cancel"
+    if any(word in text for word in ["place order", "buy", "purchase", "checkout"]):
+        return "place"
+    return ""
+
+
+def _follow_up_for_missing_details(messages: list) -> str:
+    if not messages or not isinstance(messages[-1], HumanMessage):
+        return ""
+
+    latest_user_text = _to_text(messages[-1])
+    all_user_text = "\n".join(_to_text(m) for m in messages if isinstance(m, HumanMessage))
+    request_type = _pick_request_type(latest_user_text, all_user_text)
+
+    if request_type in {"cancel", "refund"} and not _has_order_id(all_user_text):
+        action_label = "cancellation" if request_type == "cancel" else "a refund"
+        return (
+            f"I can help with {action_label}. Before I proceed, please share your order ID "
+            "(for example, ORD-1012)."
+        )
+
+    if request_type == "place":
+        missing_fields = []
+        if not _has_product(all_user_text):
+            missing_fields.append("product name or product ID")
+        if not _has_quantity(all_user_text):
+            missing_fields.append("quantity")
+        if not _has_name(all_user_text):
+            missing_fields.append("full name")
+        if not _has_email(all_user_text):
+            missing_fields.append("email address")
+        if not _has_phone(all_user_text):
+            missing_fields.append("phone number")
+
+        if not missing_fields:
+            return ""
+
+        prompt_lines = ["I can place that order. Please share:"]
+        for idx, field_name in enumerate(missing_fields, start=1):
+            prompt_lines.append(f"{idx}. {field_name}")
+        prompt_lines.append("Example: Buy 2 units of P011. My name is Alice Turner, email alice.turner@email.com, phone 4155550101")
+        return "\n".join(prompt_lines)
+
+    return ""
+
 # Nodes
 def call_model(state: AgentState):
+    follow_up_question = _follow_up_for_missing_details(state["messages"])
+    if follow_up_question:
+        return {"messages": [AIMessage(content=follow_up_question)]}
+
     last_message = state["messages"][-1]
     if isinstance(last_message, ToolMessage) and str(last_message.content).startswith("PLACE_ORDER_RESULT:"):
         payload_text = str(last_message.content).replace("PLACE_ORDER_RESULT:", "", 1).strip()
-        order_id_match = re.search(r"order_id=([^;]+)", payload_text)
-        product_match = re.search(r"product_id=([^;]+)", payload_text)
-        quantity_match = re.search(r"quantity=([^;]+)", payload_text)
-        amount_match = re.search(r"amount=([^;]+)", payload_text)
+        parsed_fields = {}
+        for part in payload_text.split(";"):
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            parsed_fields[key.strip()] = value.strip()
 
-        order_id = order_id_match.group(1).strip() if order_id_match else "N/A"
-        product_id = product_match.group(1).strip() if product_match else "N/A"
-        quantity = quantity_match.group(1).strip() if quantity_match else "N/A"
-        amount = amount_match.group(1).strip() if amount_match else "N/A"
+        order_id = parsed_fields.get("order_id", "N/A")
+        product_id = parsed_fields.get("product_id", "N/A")
+        quantity = parsed_fields.get("quantity", "N/A")
+        amount = parsed_fields.get("amount", "N/A")
 
         if not order_id.startswith("ORD-"):
             return {"messages": [AIMessage(content=payload_text)]}

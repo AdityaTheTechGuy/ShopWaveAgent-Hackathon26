@@ -12,6 +12,7 @@ from agent import app, SYSTEM_PROMPT
 
 console = Console()
 AUDIT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+MAX_USER_INPUT_CHARS = 600
 
 
 def save_audit_log_async(audit_log_path: str, history: list) -> Future:
@@ -39,8 +40,8 @@ def show_help_panel() -> None:
         "4. Product help\n"
         "   Example: [italic]tell me about NovaFit Smartwatch X2[/italic]\n"
         "5. Place a new order\n"
-        "   Example: [italic]I want to buy 2 smartwatches[/italic] or [italic]buy ChronoClassic Analog Watch[/italic]\n\n"
-        "[bold]Tips:[/bold] Mention order ID if you have it.\n"
+        "   Example: [italic]Buy 2 units of P011. My name is Alice Turner, email alice.turner@email.com, phone 4155550101[/italic]\n\n"
+        "[bold]Tips:[/bold] Mention order ID if you have it, and include name/email/phone for checkout.\n"
         "Type [italic]exit[/italic], [italic]quit[/italic], [italic]bye[/italic], or [italic]goodbye[/italic] to end chat."
     )
     console.print(Panel(help_text, title="[bold yellow]How To Use ShopWave Support[/bold yellow]", border_style="yellow"))
@@ -66,6 +67,12 @@ def run_cli():
             if user_input.lower() in {"exit", "quit", "bye", "goodbye"}:
                 console.print("[bold red]Exiting. Goodbye![/bold red]")
                 break
+
+            if len(user_input) > MAX_USER_INPUT_CHARS:
+                console.print(
+                    f"[bold yellow]Please keep messages under {MAX_USER_INPUT_CHARS} characters.[/bold yellow]"
+                )
+                continue
 
             messages.append(HumanMessage(content=user_input))
             result = app.invoke({"messages": messages})

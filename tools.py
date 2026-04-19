@@ -8,6 +8,9 @@ ROOT_DIR = Path(__file__).resolve().parent
 ORDERS_FILE = ROOT_DIR / "data" / "orders.json"
 CUSTOMERS_FILE = ROOT_DIR / "data" / "customers.json"
 KB_FILE = ROOT_DIR / "data" / "knowledge-base.md"
+MIN_ORDER_QTY = 1
+MAX_ORDER_QTY = 10
+EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
 def load_data(filename):
     """Load one of the small JSON fixtures from the data folder."""
@@ -64,12 +67,44 @@ def next_order_id() -> str:
 
 
 def normalize_order_id(order_id: str) -> str:
-    """Normalize order IDs into ORD-XXXX format."""
+    """Normalize order IDs into ORD-XXXX format if input is valid."""
     oid = (order_id or "").strip().upper()
-    digits = re.sub(r"\D", "", oid)
-    if digits:
-        return f"ORD-{digits}"
-    return oid
+    if oid.startswith("ORD-") and oid[4:].isdigit():
+        return oid
+    if oid.isdigit():
+        return f"ORD-{oid}"
+    return ""
+
+
+def next_customer_id() -> str:
+    """Generate the next customer ID in CXXX format."""
+    max_num = 0
+    for customer in customers:
+        customer_id = str(customer.get("customer_id", "")).upper()
+        if customer_id.startswith("C") and customer_id[1:].isdigit():
+            max_num = max(max_num, int(customer_id[1:]))
+    return f"C{max_num + 1:03d}"
+
+
+def matches_customer_query(customer: dict, query: str) -> bool:
+    """Return True when query matches customer email, name, or ID."""
+    q = query.strip().lower()
+    return q in {
+        customer.get("email", "").lower(),
+        customer.get("name", "").lower(),
+        customer.get("customer_id", "").lower(),
+    }
+
+
+def is_valid_email(email: str) -> bool:
+    """Return True when email format looks valid."""
+    return bool(EMAIL_PATTERN.match((email or "").strip()))
+
+
+def normalize_phone_10(phone_text: str) -> str:
+    """Return 10-digit phone number or empty string if invalid."""
+    digits = "".join(ch for ch in (phone_text or "") if ch.isdigit())
+    return digits if len(digits) == 10 else ""
 
 
 def resolve_customer(customer_query: str | None):
@@ -83,11 +118,125 @@ def resolve_customer(customer_query: str | None):
 
     # Search by email, name, or ID
     for c in customers:
-        if q == c["email"].lower() or q == c["name"].lower() or q == c["customer_id"].lower():
+        if matches_customer_query(c, q):
             return c
     
     # Default to guest
     return next((c for c in customers if c["customer_id"] == "C000"), None)
+
+
+def extract_customer_profile(request: str, customer_query: str | None) -> dict:
+    """Extract customer details from checkout text and optional query hint."""
+    text = (request or "").strip()
+    lowered = text.lower()
+    profile = {
+        "name": "",
+        "email": "",
+        "phone": "",
+        "email_provided": False,
+        "phone_provided": False,
+    }
+
+    email_marker = re.search(r"\b(?:email|e-mail)\b", text, re.IGNORECASE)
+    if email_marker:
+        profile["email_provided"] = True
+
+    email_match = re.search(r"\b[\w.%-]+@[\w.-]+\.[A-Za-z]{2,}\b", text)
+    if email_match:
+        profile["email"] = email_match.group(0).strip().lower().rstrip(".,;:")
+        profile["email_provided"] = True
+
+    phone_match = re.search(r"(?:phone|mobile|contact|number)\s*(?:is|:)?\s*([+()\d\-\s]{7,24})", text, re.IGNORECASE)
+    if phone_match:
+        raw_phone = " ".join(phone_match.group(1).split()).rstrip(".,;:")
+        profile["phone_provided"] = True
+        profile["phone"] = normalize_phone_10(raw_phone)
+
+    name_markers = ["my name is", "name is", "name:", "i am", "this is"]
+    for marker in name_markers:
+        idx = lowered.find(marker)
+        if idx == -1:
+            continue
+
+        tail = text[idx + len(marker):].strip(" .,:;-")
+        tokens = [t.strip(".,:;-") for t in tail.split() if t.strip(".,:;-")]
+        name_tokens = []
+        for token in tokens:
+            if "@" in token or any(ch.isdigit() for ch in token):
+                break
+            name_tokens.append(token)
+            if len(name_tokens) >= 4:
+                break
+        if len(name_tokens) >= 2:
+            profile["name"] = " ".join(name_tokens)
+            break
+
+    query = (customer_query or "").strip()
+    if not profile["email"] and "@" in query and "." in query.split("@")[-1]:
+        profile["email"] = query.lower().rstrip(".,;:")
+        profile["email_provided"] = True
+
+    if not profile["phone_provided"] and any(ch.isdigit() for ch in query):
+        profile["phone_provided"] = True
+        profile["phone"] = normalize_phone_10(query)
+
+    if not profile["name"] and query and "@" not in query:
+        q_lower = query.lower()
+        if not q_lower.startswith("c") and q_lower not in {"guest", "no account", "unknown"}:
+            words = [w for w in query.split() if w]
+            if len(words) >= 2:
+                profile["name"] = " ".join(words[:3])
+
+    return profile
+
+
+def resolve_or_create_customer(profile: dict, customer_query: str | None):
+    """Find an existing customer and update details, or create a new record."""
+    existing_customer = None
+    email = profile.get("email", "").strip().lower()
+
+    if email:
+        existing_customer = next(
+            (c for c in customers if c.get("email", "").strip().lower() == email),
+            None,
+        )
+
+    if not existing_customer and customer_query:
+        candidate = resolve_customer(customer_query)
+        if candidate and candidate.get("customer_id") != "C000":
+            existing_customer = candidate
+
+    if existing_customer:
+        if profile.get("name"):
+            existing_customer["name"] = profile["name"]
+        if profile.get("email"):
+            existing_customer["email"] = profile["email"]
+        if profile.get("phone"):
+            existing_customer["phone"] = profile["phone"]
+        return existing_customer
+
+    if not profile.get("name") or not profile.get("email"):
+        return None
+
+    new_customer = {
+        "customer_id": next_customer_id(),
+        "name": profile["name"],
+        "email": profile["email"],
+        "phone": profile.get("phone") or "N/A",
+        "tier": "standard",
+        "member_since": datetime.now().strftime("%Y-%m-%d"),
+        "total_orders": 0,
+        "total_spent": 0.0,
+        "address": {
+            "street": "N/A",
+            "city": "N/A",
+            "state": "N/A",
+            "zip": "00000",
+        },
+        "notes": "Customer profile created by support assistant during checkout.",
+    }
+    customers.append(new_customer)
+    return new_customer
 
 
 def parse_quantity_from_request(request: str, fallback_quantity: int) -> int:
@@ -208,7 +357,7 @@ def get_customer_info(query: str):
     """Look up a customer by email, name, or ID."""
     q = query.strip().lower()
     for c in customers:
-        if q == c["email"].lower() or q == c["name"].lower() or q == c["customer_id"].lower():
+        if matches_customer_query(c, q):
             return c
     return {"error": "Customer not found"}
 
@@ -216,6 +365,8 @@ def get_customer_info(query: str):
 def get_order(order_id: str):
     """Look up an order by order ID."""
     oid = normalize_order_id(order_id)
+    if not oid:
+        return {"error": "Invalid order ID format. Use ORD-1234 or 1234."}
     return next((o for o in orders if o["order_id"] == oid), {"error": "Order not found"})
 
 @tool("get_product_info")
@@ -274,6 +425,8 @@ def search_knowledge_base(query: str, section: str = ""):
 def check_refund_eligibility(order_id: str):
     """Check if an order can be refunded."""
     oid = normalize_order_id(order_id)
+    if not oid:
+        return {"eligible": False, "reason": "Invalid order ID format. Use ORD-1234 or 1234."}
     order = next((o for o in orders if o["order_id"] == oid), None)
     if not order:
         return {"eligible": False, "reason": "Order not found"}
@@ -302,6 +455,8 @@ def check_refund_eligibility(order_id: str):
 def issue_refund(order_id: str):
     """Process a refund for an order."""
     oid = normalize_order_id(order_id)
+    if not oid:
+        return {"success": False, "message": "Invalid order ID format. Use ORD-1234 or 1234."}
     order = next((o for o in orders if o["order_id"] == oid), None)
     if not order:
         return {"success": False, "message": "Order not found"}
@@ -329,6 +484,8 @@ def issue_refund(order_id: str):
 def cancel_order(order_id: str):
     """Cancel an order if it's in processing state."""
     oid = normalize_order_id(order_id)
+    if not oid:
+        return {"success": False, "message": "Invalid order ID format. Use ORD-1234 or 1234."}
     order = next((o for o in orders if o["order_id"] == oid), None)
     if not order:
         return {"success": False, "message": "Order not found"}
@@ -350,9 +507,28 @@ def place_order(request: str, quantity: int = 0, customer_query: str = "guest"):
     if not request or not request.strip():
         return f"Please pick from our catalog.\n{build_catalog_summary()}"
 
-    resolved_customer = resolve_customer(customer_query)
+    customer_profile = extract_customer_profile(request, customer_query)
+    missing_details = []
+    invalid_details = []
+    if not customer_profile.get("name"):
+        missing_details.append("full name")
+    if not customer_profile.get("email_provided"):
+        missing_details.append("email address")
+    elif not is_valid_email(customer_profile.get("email", "")):
+        invalid_details.append("email format is invalid")
+    if not customer_profile.get("phone_provided"):
+        missing_details.append("phone number")
+    elif not customer_profile.get("phone"):
+        invalid_details.append("phone number must be exactly 10 digits")
+
+    if missing_details:
+        return "Please share these checkout details: " + ", ".join(missing_details) + "."
+    if invalid_details:
+        return "Please correct these checkout details: " + ", ".join(invalid_details) + "."
+
+    resolved_customer = resolve_or_create_customer(customer_profile, customer_query)
     if not resolved_customer:
-        return "Unable to resolve customer profile for checkout."
+        return "Unable to resolve customer profile for checkout. Please provide full name and email."
 
     resolved_product = resolve_product_from_request(request)
     if resolved_product["status"] == "invalid_company":
@@ -373,8 +549,10 @@ def place_order(request: str, quantity: int = 0, customer_query: str = "guest"):
 
     product = resolved_product["product"]
     resolved_quantity = parse_quantity_from_request(request, quantity)
-    if resolved_quantity < 1:
-        return "Quantity must be at least 1."
+    if resolved_quantity < MIN_ORDER_QTY:
+        return f"Quantity must be at least {MIN_ORDER_QTY}."
+    if resolved_quantity > MAX_ORDER_QTY:
+        return f"For safety, you can place up to {MAX_ORDER_QTY} units per order."
 
     order_id = next_order_id()
     order_date = datetime.now().strftime("%Y-%m-%d")
