@@ -18,13 +18,13 @@
   },
   {
     "customer_id": "C001",
-    "name": "Alice Turner",
+    "name": "Alice Turner email",
     "email": "alice.turner@email.com",
-    "phone": "+1-415-555-0101",
+    "phone": "4155550101",
     "tier": "vip",
     "member_since": "2019-03-12",
-    "total_orders": 47,
-    "total_spent": 6840.5,
+    "total_orders": 49,
+    "total_spent": 7960.46,
     "address": {
       "street": "12 Maple Avenue",
       "city": "San Francisco",
@@ -185,5 +185,39 @@
       "zip": "92101"
     },
     "notes": "Often asks for shipping updates."
+  },
+  {
+    "customer_id": "C011",
+    "name": "Aditya Gupta email",
+    "email": "adigupta@email.com",
+    "phone": "8910000000",
+    "tier": "standard",
+    "member_since": "2026-04-19",
+    "total_orders": 2,
+    "total_spent": 399.98,
+    "address": {
+      "street": "N/A",
+      "city": "N/A",
+      "state": "N/A",
+      "zip": "00000"
+    },
+    "notes": "Customer profile created by support assistant during checkout."
+  },
+  {
+    "customer_id": "C012",
+    "name": "Aditya Gupta email",
+    "email": "adi.gupta@email.com",
+    "phone": "8979101111",
+    "tier": "standard",
+    "member_since": "2026-04-19",
+    "total_orders": 1,
+    "total_spent": 259.98,
+    "address": {
+      "street": "N/A",
+      "city": "N/A",
+      "state": "N/A",
+      "zip": "00000"
+    },
+    "notes": "Customer profile created by support assistant during checkout."
   }
 ]

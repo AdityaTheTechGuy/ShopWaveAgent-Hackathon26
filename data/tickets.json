@@ -10,7 +10,7 @@
     "expected_tools": [
       "check_refund_eligibility"
     ],
-    "expected_outcome": "refund_approved"
+    "expected_outcome": "refund_already_processed"
   },
   {
     "ticket_id": "TKT-002",
@@ -38,7 +38,7 @@
       "get_order",
       "cancel_order"
     ],
-    "expected_outcome": "cancellation_success"
+    "expected_outcome": "cancellation_already_cancelled"
   },
   {
     "ticket_id": "TKT-004",
@@ -94,7 +94,7 @@
       "check_refund_eligibility",
       "issue_refund"
     ],
-    "expected_outcome": "refund_approved"
+    "expected_outcome": "refund_already_processed"
   },
   {
     "ticket_id": "TKT-008",
@@ -109,7 +109,7 @@
       "check_refund_eligibility",
       "issue_refund"
     ],
-    "expected_outcome": "refund_approved"
+    "expected_outcome": "refund_already_processed"
   },
   {
     "ticket_id": "TKT-009",
@@ -137,7 +137,7 @@
       "get_order",
       "cancel_order"
     ],
-    "expected_outcome": "cancellation_success"
+    "expected_outcome": "cancellation_already_cancelled"
   },
   {
     "ticket_id": "TKT-011",
@@ -164,7 +164,7 @@
       "get_order",
       "cancel_order"
     ],
-    "expected_outcome": "cancellation_success"
+    "expected_outcome": "cancellation_already_cancelled"
   },
   {
     "ticket_id": "TKT-013",
@@ -216,7 +216,7 @@
     "expected_tools": [
       "place_order"
     ],
-    "expected_outcome": "order_created"
+    "expected_outcome": "checkout_followup_required"
   },
   {
     "ticket_id": "TKT-017",
@@ -238,6 +238,19 @@
     "body": "My item arrived damaged and I want a replacement, not a refund.",
     "source": "ticket_queue",
     "created_at": "2026-04-18T12:00:00Z",
+    "priority": "urgent",
+    "expected_tools": [
+      "escalate_to_human"
+    ],
+    "expected_outcome": "escalated"
+  },
+  {
+    "ticket_id": "TKT-019",
+    "customer_email": "frustrated.user@email.com",
+    "subject": "Supervisor escalation request",
+    "body": "I am angry and this is not helping. I want to talk to a supervisor.",
+    "source": "chat",
+    "created_at": "2026-04-18T12:10:00Z",
     "priority": "urgent",
     "expected_tools": [
       "escalate_to_human"

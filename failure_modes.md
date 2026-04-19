@@ -1,86 +1,148 @@
-# ShopWave AI Support Agent - Failure Modes
+# ShopWave Failure Modes
 
-This file lists practical failure scenarios and expected behavior after the latest guardrail and checkout updates.
+This document captures realistic failure scenarios, impact, and current mitigation in the codebase.
 
-## 1. Invalid Order ID Format
-
-Scenario:
-User sends an invalid ID like `ABC-77` for order status, cancellation, or refund.
-
-What can go wrong:
-The system might normalize bad input and fetch the wrong order.
-
-How we handle it:
-- `normalize_order_id` now accepts only `ORD-<digits>` or plain digits.
-- Invalid input returns a clear validation message.
-- No order mutation happens for invalid IDs.
-
-Expected result:
-User gets a direct correction message and no data is changed.
-
-## 2. Oversized User Input
+## 1) Invalid Order ID Input
 
 Scenario:
-User pastes a very long prompt in the CLI.
+User sends malformed IDs such as ABC-77 for refund/cancel/status.
 
-What can go wrong:
-Very large input can stress token usage and degrade response quality.
+Risk:
+Wrong normalization can trigger incorrect lookup or action attempts.
 
-How we handle it:
-- CLI blocks input over 600 characters.
-- User gets a friendly prompt to shorten the request.
-- The agent does not process oversized input.
+Mitigation:
+- normalize_order_id accepts only ORD-<digits> or plain digits.
+- Invalid formats return correction prompts.
+- No state mutation happens on invalid IDs.
 
-Expected result:
-Session remains responsive and safe.
+Expected behavior:
+User gets a validation message and nothing is changed.
 
-## 3. Quantity Abuse During Checkout
-
-Scenario:
-User requests very high quantity, for example 25 units.
-
-What can go wrong:
-Unrealistic bulk orders can bypass demo constraints.
-
-How we handle it:
-- `place_order` enforces quantity range 1 to 10.
-- Out-of-range requests return explicit limits.
-
-Expected result:
-No oversized orders are created.
-
-## 4. Missing Real-World Checkout Details
+## 2) Oversized Messages
 
 Scenario:
-User asks to place an order without customer details.
+User pastes large text blocks into CLI.
 
-What can go wrong:
-Order may be placed without enough identity/contact data.
+Risk:
+High token usage and reduced response quality.
 
-How we handle it:
-- Agent asks follow-up questions for missing full name, email, and phone.
-- `place_order` independently validates and blocks checkout when those details are missing.
+Mitigation:
+- CLI rejects messages longer than 600 chars.
+- Agent is not invoked for rejected input.
 
-Expected result:
-Order creation only happens after required checkout details are provided.
+Expected behavior:
+User is asked to shorten input, session remains responsive.
 
-## 5. Existing vs New Customer During Checkout
+## 3) Ambiguous 4-Digit Numbers
 
 Scenario:
-User places order with an email that may or may not already exist.
+User mentions a random 4-digit number in support chat.
 
-What can go wrong:
-Duplicate customer records or stale customer profile details.
+Risk:
+Number is misread as order ID and leads to misleading errors.
 
-How we handle it:
-- Existing customer is matched by email and profile fields are updated.
-- If no existing customer is found, a new customer ID is created.
-- Order and customer totals are updated together.
+Mitigation:
+- ORD-XXXX patterns are preferred.
+- Bare 4-digit values are accepted only in clear order/refund/cancel context.
+- Refund/cancel without valid context triggers follow-up prompt.
 
-Expected result:
-Customer records stay consistent, and each order links to a valid customer profile.
+Expected behavior:
+Incidental numbers do not trigger accidental order operations.
+
+## 4) Checkout Quantity Abuse
+
+Scenario:
+User requests unrealistic quantity, for example 25 units.
+
+Risk:
+Demo constraints and inventory assumptions are violated.
+
+Mitigation:
+- place_order enforces quantity range 1-10.
+- Out-of-range requests return explicit guidance.
+
+Expected behavior:
+No oversized order is created.
+
+## 5) Missing Checkout Identity Fields
+
+Scenario:
+User starts purchase without name/email/phone.
+
+Risk:
+Order gets created without required contactability.
+
+Mitigation:
+- Agent asks for missing checkout fields across turns.
+- Tool-layer validation blocks placement without all required fields.
+
+Expected behavior:
+Order is created only after all required details are provided.
+
+## 6) Duplicate Customer Creation
+
+Scenario:
+User reorders with an email that already exists.
+
+Risk:
+Duplicate customer records, fragmented history.
+
+Mitigation:
+- Existing customer is matched by email.
+- Existing profile is updated in place when needed.
+- New customer is created only when no match exists.
+
+Expected behavior:
+Orders consistently link to a single valid customer record.
+
+## 7) Product Lookup by Name vs ID
+
+Scenario:
+User asks for product details using a natural name only.
+
+Risk:
+Lookup path may ask for product ID instead of resolving name.
+
+Mitigation:
+- Product detail lookup is strict by product_id.
+- Name resolution is supported in buy/place_order context.
+- Agent asks for product ID when required.
+
+Expected behavior:
+No wrong product is returned; user gets a clear next step.
+
+## 8) Policy Retrieval Drift
+
+Scenario:
+User asks mixed policy questions with noisy wording.
+
+Risk:
+Retrieved section may be adjacent but not exact policy intent.
+
+Mitigation:
+- Knowledge base search uses intent-aware matching and section boosts.
+- Response prioritizes top-scoring relevant section.
+
+Expected behavior:
+Policy answer usually aligns to the asked topic; fallback asks clarifying follow-up.
+
+## 9) Escalation Misses in Edge Phrasing
+
+Scenario:
+User asks for manager/supervisor in unusual wording.
+
+Risk:
+Escalation may be under-triggered for non-standard phrasing.
+
+Mitigation:
+- Escalation detector includes broad keyword coverage.
+- Router also supports escalate_human action.
+- Manual fallback remains available via explicit user request.
+
+Expected behavior:
+Most hostile/escalation cases route to human; rare edge phrasing may need one clarification turn.
 
 ## Notes
 
-- These scenarios are aligned with the current implementation in `agent.py`, `tools.py`, and `main.py`.
-- Tool-layer checks remain the source of truth for business-rule enforcement.
+- Deterministic tool validation is the source of truth for all state-changing actions.
+- Router flexibility does not bypass business rules in tools layer.

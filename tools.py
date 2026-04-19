@@ -104,6 +104,8 @@ def is_valid_email(email: str) -> bool:
 def normalize_phone_10(phone_text: str) -> str:
     """Return 10-digit phone number or empty string if invalid."""
     digits = "".join(ch for ch in (phone_text or "") if ch.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
     return digits if len(digits) == 10 else ""
 
 
@@ -112,9 +114,19 @@ def resolve_customer(customer_query: str | None):
     if not customer_query:
         return next((c for c in customers if c["customer_id"] == "C000"), None)
 
-    q = customer_query.strip().lower()
+    raw_query = customer_query.strip()
+    q = raw_query.lower()
     if q in {"guest", "no account", "unknown"}:
         return next((c for c in customers if c["customer_id"] == "C000"), None)
+
+    # Handle free-form text like "Customer email: x@y.com. ..."
+    email_match = re.search(r"\b[\w.%-]+@[\w.-]+\.[A-Za-z]{2,}\b", raw_query)
+    if email_match:
+        q = email_match.group(0).strip().lower()
+    else:
+        id_match = re.search(r"\bC\d{3}\b", raw_query.upper())
+        if id_match:
+            q = id_match.group(0).lower()
 
     # Search by email, name, or ID
     for c in customers:
@@ -151,6 +163,12 @@ def extract_customer_profile(request: str, customer_query: str | None) -> dict:
         raw_phone = " ".join(phone_match.group(1).split()).rstrip(".,;:")
         profile["phone_provided"] = True
         profile["phone"] = normalize_phone_10(raw_phone)
+    else:
+        # Fallback for plain entries like ", 8900199912,"
+        standalone_phone = re.search(r"(?<!\d)(\d{10})(?!\d)", text)
+        if standalone_phone:
+            profile["phone_provided"] = True
+            profile["phone"] = standalone_phone.group(1)
 
     name_markers = ["my name is", "name is", "name:", "i am", "this is"]
     for marker in name_markers:
@@ -170,6 +188,24 @@ def extract_customer_profile(request: str, customer_query: str | None) -> dict:
         if len(name_tokens) >= 2:
             profile["name"] = " ".join(name_tokens)
             break
+
+    if not profile["name"]:
+        # Fallback for comma-separated checkout style:
+        # "Aditya Gupta, aditya@email.com, 8900199912, 2"
+        for segment in text.split(","):
+            candidate = segment.strip(" .,:;-")
+            if not candidate:
+                continue
+            if "@" in candidate or any(ch.isdigit() for ch in candidate):
+                continue
+            words = [w for w in candidate.split() if w]
+            if len(words) < 2 or len(words) > 4:
+                continue
+            if any(w.lower() in {"buy", "order", "units", "quantity", "phone", "email"} for w in words):
+                continue
+            if all(token.replace("-", "").isalpha() for token in words):
+                profile["name"] = " ".join(words)
+                break
 
     query = (customer_query or "").strip()
     if not profile["email"] and "@" in query and "." in query.split("@")[-1]:
@@ -287,6 +323,43 @@ def resolve_product_from_request(request: str):
         matches = [p for p in matches if p.get("company", "").lower() == company_hint]
     
     if not matches:
+        # Fuzzy fallback: match by informative token overlap (name/company/ID).
+        stop_words = {
+            "i", "want", "to", "buy", "order", "please", "my", "a", "an", "the",
+            "unit", "units", "qty", "quantity", "product", "products",
+            "for", "of", "this", "that", "is", "it",
+        }
+
+        def token_set(value: str) -> set[str]:
+            return {
+                tok
+                for tok in re.split(r"[^a-z0-9]+", (value or "").lower())
+                if tok and tok not in stop_words
+            }
+
+        query_tokens = token_set(req)
+        if query_tokens:
+            scored = []
+            for p in products:
+                if company_hint and p.get("company", "").lower() != company_hint:
+                    continue
+                product_tokens = token_set(p.get("name", "")) | token_set(p.get("company", "")) | token_set(p.get("product_id", ""))
+                score = len(query_tokens & product_tokens)
+                if score > 0:
+                    scored.append((score, p))
+
+            if scored:
+                scored.sort(key=lambda x: x[0], reverse=True)
+                top_score = scored[0][0]
+                top_matches = [p for s, p in scored if s == top_score]
+                if len(top_matches) == 1:
+                    return {"status": "ok", "product": top_matches[0]}
+                return {
+                    "status": "ambiguous",
+                    "message": "Multiple products found",
+                    "choices": [f"{p['name']} ({p['product_id']})" for p in top_matches[:4]],
+                }
+
         return {"status": "not_found", "message": "Product not found."}
     
     if len(matches) > 1:
@@ -390,13 +463,28 @@ def search_knowledge_base(query: str, section: str = ""):
         sections = [s for s in sections if section_filter in s["title"]]
 
     ranked = []
+
+    intent_map = {
+        "cancellation": {"cancel", "cancellation"},
+        "refund": {"refund", "money", "back"},
+        "return": {"return", "returns", "exchange"},
+        "warranty": {"warranty", "guarantee"},
+        "escalation": {"escalate", "escalation", "human", "agent"},
+    }
+
     for entry in sections:
         title = entry["title"]
         content = entry["content"]
         haystack = f"{title}\n{content}".lower()
         token_hits = sum(1 for tok in query_tokens if tok in haystack)
         phrase_bonus = 3 if q in haystack else 0
-        score = token_hits + phrase_bonus
+        intent_bonus = 0
+        title_lower = title.lower()
+        for section_key, keywords in intent_map.items():
+            if any(keyword in q for keyword in keywords) and section_key in title_lower:
+                intent_bonus += 4
+
+        score = token_hits + phrase_bonus + intent_bonus
         if score > 0:
             ranked.append((score, entry))
 
@@ -507,7 +595,36 @@ def place_order(request: str, quantity: int = 0, customer_query: str = "guest"):
     if not request or not request.strip():
         return f"Please pick from our catalog.\n{build_catalog_summary()}"
 
+    resolved_product = resolve_product_from_request(request)
+    if resolved_product["status"] == "invalid_company":
+        companies = ", ".join(resolved_product.get("allowed_companies", []))
+        return (
+            "Order denied: that company is not available. "
+            f"Allowed companies: {companies}.\n{build_catalog_summary()}"
+        )
+    if resolved_product["status"] == "not_found":
+        return (
+            "Order denied: that product is not available. "
+            "Please choose one of the listed products.\n"
+            f"{build_catalog_summary()}"
+        )
+    if resolved_product["status"] == "ambiguous":
+        options = ", ".join(resolved_product.get("choices", []))
+        return f"I found multiple matches: {options}. Please confirm which one you want."
+
     customer_profile = extract_customer_profile(request, customer_query)
+    existing_customer = resolve_customer(customer_query)
+    if existing_customer and existing_customer.get("customer_id") != "C000":
+        if not customer_profile.get("name") and existing_customer.get("name"):
+            customer_profile["name"] = str(existing_customer.get("name", "")).strip()
+        if not customer_profile.get("email") and existing_customer.get("email"):
+            customer_profile["email"] = str(existing_customer.get("email", "")).strip().lower()
+            customer_profile["email_provided"] = True
+        if not customer_profile.get("phone") and existing_customer.get("phone"):
+            phone = normalize_phone_10(str(existing_customer.get("phone", "")))
+            customer_profile["phone"] = phone
+            customer_profile["phone_provided"] = bool(phone)
+
     missing_details = []
     invalid_details = []
     if not customer_profile.get("name"):
@@ -529,23 +646,6 @@ def place_order(request: str, quantity: int = 0, customer_query: str = "guest"):
     resolved_customer = resolve_or_create_customer(customer_profile, customer_query)
     if not resolved_customer:
         return "Unable to resolve customer profile for checkout. Please provide full name and email."
-
-    resolved_product = resolve_product_from_request(request)
-    if resolved_product["status"] == "invalid_company":
-        companies = ", ".join(resolved_product.get("allowed_companies", []))
-        return (
-            "Order denied: that company is not available. "
-            f"Allowed companies: {companies}.\n{build_catalog_summary()}"
-        )
-    if resolved_product["status"] == "not_found":
-        return (
-            "Order denied: that product is not available. "
-            "Please choose one of the listed products.\n"
-            f"{build_catalog_summary()}"
-        )
-    if resolved_product["status"] == "ambiguous":
-        options = ", ".join(resolved_product.get("choices", []))
-        return f"I found multiple matches: {options}. Please confirm which one you want."
 
     product = resolved_product["product"]
     resolved_quantity = parse_quantity_from_request(request, quantity)

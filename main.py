@@ -55,7 +55,7 @@ def run_cli():
 
     console.print(Panel.fit(
         "[bold cyan]ShopWave AI Support Agent[/bold cyan]\n"
-        "[dim]Powered by llama-3.3-70b-versatile and LangGraph[/dim]",
+        "[dim]Powered by llama-3.1-8b-instant and LangGraph[/dim]",
         border_style="blue"
     ))
     show_help_panel()

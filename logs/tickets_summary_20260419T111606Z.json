@@ -1,0 +1,7 @@
+{
+  "run_id": "20260419T111606Z",
+  "total_tickets": 19,
+  "passed": 19,
+  "failed": 0,
+  "audit_log": "logs\\tickets_audit_20260419T111606Z.jsonl"
+}
